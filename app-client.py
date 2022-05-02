@@ -9,15 +9,13 @@ sel = selectors.DefaultSelector()
 
 
 def create_request(action, value):
-    if action == "search":
+    if action == "login":
         return dict(
-            type="text/json",
             encoding="utf-8",
             content=dict(action=action, value=value),
         )
     else:
         return dict(
-            type="binary/custom-client-binary-type",
             encoding="binary",
             content=bytes(action + value, encoding="utf-8"),
         )
@@ -55,7 +53,7 @@ try:
                     f"Main: Error: Exception for {message.addr}:\n"
                     f"{traceback.format_exc()}"
                 )
-                message.close()
+                message.close() 
         # Check for a socket being monitored to continue.
         if not sel.get_map():
             break
