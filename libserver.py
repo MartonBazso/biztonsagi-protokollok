@@ -71,7 +71,7 @@ class Message:
                     self.close()
 
     def _create_message(
-        self, *, payload
+        self, payload
     ):
         
         # compute payload_length and set authtag_length
@@ -86,12 +86,12 @@ class Message:
         # create header
         ver = b'\x01\x00'                                     # protocol version 1.0
         typ = b'\x00\x10'                                     # message type 1
-        len = msg_length.to_bytes(2, byteorder='big')         # message length (encoded on 2 bytes)
+        _len = msg_length.to_bytes(2, byteorder='big')         # message length (encoded on 2 bytes)
         sqn = (1).to_bytes(2, byteorder='big')                # next message sequence number (encoded on 2 bytes)
         rnd = Random.get_random_bytes(6)                      # 6-byte long random value
         rsv = b'\x00\x00'                                     # reserved bytes
 
-        header = ver + typ + len + sqn + rnd + rsv
+        header = ver + typ + _len + sqn + rnd + rsv
 
         # encrypt the payload and compute the authentication tag over the header and the payload
         # with AES in GCM mode using nonce = sqn + rnd
@@ -99,7 +99,7 @@ class Message:
 
         AE = AES.new(self.key, AES.MODE_GCM, nonce=nonce, mac_len=self._authtag_len)
         AE.update(header)
-        encrypted_payload, authtag = AE.encrypt_and_digest(payload)
+        encrypted_payload, authtag = AE.encrypt_and_digest(bytes(payload, 'utf-8'))
 
         msg = header + encrypted_payload + authtag
         
@@ -117,9 +117,8 @@ class Message:
         self.process_request()
 
     def write(self):
-        if self.request:
-            if not self.response_created:
-                self.create_response()
+
+        self.create_response()
 
         self._write()
 
@@ -148,14 +147,14 @@ class Message:
         header = msg[0:16]
         ver = header[0:2]      # version is encoded on 2 bytes 
         typ = header[2:4]         # type is encoded on 2 byte 
-        len = header[4:6]       # msg length is encoded on 2 bytes 
+        _len = header[4:6]       # msg length is encoded on 2 bytes 
         sqn = header[6:8]          # msg sqn is encoded on 2 bytes 
         rnd = header[8:14]         # random is encoded on 6 bytes 
         rsv = header[14:16]        # reserved is encoded on 2 bytes
 
         # check the msg length
         msg_len = len(msg)
-        if msg_len != int.from_bytes(len, byteorder='big'):
+        if msg_len != int.from_bytes(_len, byteorder='big'):
             print("Warning: Message length value in header is wrong!")
             self.close()
 
@@ -176,7 +175,15 @@ class Message:
             encrypted_payload = mtp_msg[16:-12]   # encrypted payload is between header and authtag
             
             # create an RSA cipher object
-            RSAcipher = PKCS1_OAEP.new(...)
+            with open('privkey.pem', 'rb') as f:
+                keypairstr = f.read()
+            try:
+                keypair = RSA.import_key(keypairstr, passphrase='asdf')
+            except ValueError:
+                print('Error: Cannot import private key from file ')
+                sys.exit(1)
+
+            RSAcipher = PKCS1_OAEP.new(keypair)
             self.key = RSAcipher.decrypt(etk)
 
         else:
@@ -209,7 +216,7 @@ class Message:
         self._set_selector_events_mask("w")
 
     def create_response(self):
-        response = ''
-        message = self._create_message(**response)
+        payload = 'logged in'
+        message = self._create_message(payload)
         self.response_created = True
         self._send_buffer += message

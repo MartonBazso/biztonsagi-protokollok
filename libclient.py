@@ -95,19 +95,19 @@ class Message:
         # create header
         ver = b'\x01\x00'                                     # protocol version 1.0
         typ = _typ                                   # message type 0
-        len = msg_length.to_bytes(2, byteorder='big')         # message length (encoded on 2 bytes)
+        _len = msg_length.to_bytes(2, byteorder='big')         # message length (encoded on 2 bytes)
         sqn = (self._sqn + 1).to_bytes(2, byteorder='big')    # next message sequence number (encoded on 2 bytes)
         rnd = Random.get_random_bytes(6)                      # 6-byte long random value
         rsv = b'\x00\x00'                                     # reserved bytes
 
-        header = ver + typ + len + sqn + rnd + rsv
+        header = ver + typ + _len + sqn + rnd + rsv
 
         # encrypt the payload and compute the authentication tag over the header and the payload
         # with AES in GCM mode using nonce = sqn + rnd
         nonce = sqn + rnd
         AE = AES.new(self.key, AES.MODE_GCM, nonce=nonce, mac_len=self._authtag_len)
         AE.update(header)
-        encrypted_payload, authtag = AE.encrypt_and_digest(value)
+        encrypted_payload, authtag = AE.encrypt_and_digest(bytes(value, 'utf-8'))
 
         msg = header + encrypted_payload + authtag
 
@@ -187,14 +187,14 @@ class Message:
         encrypted_payload = msg[16:-12]   # encrypted payload is between header and authtag
         ver = header[0:2]                 # version is encoded on 2 bytes 
         typ = header[2:4]                 # type is encoded on 2 byte 
-        len = header[4:6]                 # msg length is encoded on 2 bytes 
+        _len = header[4:6]                 # msg length is encoded on 2 bytes 
         sqn = header[6:8]                 # msg sqn is encoded on 2 bytes 
         rnd = header[8:14]                # random is encoded on 6 bytes 
         rsv = header[14:16]               # reserved is encoded on 2 bytes
 
         # check the msg length
         msg_len = len(msg)
-        if msg_len != int.from_bytes(len, byteorder='big'):
+        if msg_len != int.from_bytes(_len, byteorder='big'):
             print("Warning: Message length value in header is wrong!")
             self.close()
 
