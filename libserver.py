@@ -1,13 +1,17 @@
+from hashlib import sha256
 import sys
 import selectors
 import json
 import io
 import struct
+import time
+import argon2
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto import Random
 from Crypto.PublicKey import RSA
 from Crypto.Util import Padding
-
+from Crypto.Hash import SHA256
+from Crypto.Protocol.KDF import HKDF
 
 class Message:
     def __init__(self, selector, sock, addr):
@@ -16,7 +20,6 @@ class Message:
         self.addr = addr
         self._recv_buffer = b""
         self._send_buffer = b""
-        self.header_len = None
         self.header = None
 
         self.key = None
@@ -25,11 +28,13 @@ class Message:
         self._authtag_len = 12  # we'd like to use a 12-byte long authentication tag
         self._sqn = 0
         self._rcvsqn = 0
-        self.header = None
         self._type = b''
 
         self.request = None
+        self.response = None
         self.response_created = False
+
+        self._request_hash = None
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -73,7 +78,12 @@ class Message:
     def _create_message(
         self, payload
     ):
-        
+
+        if self._type == b'\x00\x00':
+            typ = typ = b'\x00\x10'
+            payload = self.response
+
+
         # compute payload_length and set authtag_length
         payload_length = len(payload)
     
@@ -85,9 +95,9 @@ class Message:
 
         # create header
         ver = b'\x01\x00'                                     # protocol version 1.0
-        typ = b'\x00\x10'                                     # message type 1
+
         _len = msg_length.to_bytes(2, byteorder='big')         # message length (encoded on 2 bytes)
-        sqn = (1).to_bytes(2, byteorder='big')                # next message sequence number (encoded on 2 bytes)
+        sqn = (self._sqn).to_bytes(2, byteorder='big')                # next message sequence number (encoded on 2 bytes)
         rnd = Random.get_random_bytes(6)                      # 6-byte long random value
         rsv = b'\x00\x00'                                     # reserved bytes
 
@@ -103,6 +113,8 @@ class Message:
 
         msg = header + encrypted_payload + authtag
         
+        self._sqn += 1
+
         return msg
 
     def process_events(self, mask):
@@ -167,6 +179,8 @@ class Message:
             self.close()    
         print("Sequence number verification is successful.")
 
+        self._type = typ
+
         if typ == b'\x00\x00':
 
             mtp_msg = msg[:-256]
@@ -203,12 +217,10 @@ class Message:
             sys.exit(1)
         print("Operation was successful: message is intact, content is decrypted.")
 
-        self._rcvsqn += 1
+        self._rcvsqn = sndsqn
         
-        
-        # TODO: login protocol
-
-        print(payload)
+        self.login_protocol(payload)
+        # print(payload)
         
         self._recv_buffer = self._recv_buffer[msg_len:]
         
@@ -216,7 +228,50 @@ class Message:
         self._set_selector_events_mask("w")
 
     def create_response(self):
-        payload = 'logged in'
+        payload = ''
         message = self._create_message(payload)
         self.response_created = True
         self._send_buffer += message
+
+ 
+    def login_protocol(self, payload):
+        msg_timestamp, username, password, client_random = payload.decode('utf-8').split("\n")
+        
+        #checks the received timestamp validity
+        timestamp = time.time_ns()
+        valid_timeframe = 2000000000 # the valid timeframe in nanoseconds
+
+        if abs(timestamp - int(msg_timestamp)) > valid_timeframe:
+            print("Message timestamp is not valid!")
+            self.close()
+        
+        #authenticate the user /w username and password
+        pass_hash = argon2.hash_password_raw(password=bytes(password, 'utf-8'), salt=b'crysys salt')
+        dict_users = dict()
+
+        #read the password hashes from file
+        with open("users.txt", "r") as file:
+            s = file.read()
+            dict_users = json.loads(s)
+        
+        if str(pass_hash.hex()) != dict_users[username]:
+            print("Password is incorrect!")
+            self.close()
+        
+        print("Correct password")
+        
+        h = SHA256.new()
+        h.update(payload)
+        self._request_hash = h.hexdigest()
+        server_random = Random.get_random_bytes(16)
+        self.response = str(self._request_hash) + '\n' + str(server_random.hex())       
+
+
+        master_sec = bytes(client_random, 'utf-8') + server_random
+        self.key = HKDF(master_sec, 32, salt=self._request_hash, hashmod=sha256, num_keys=1)
+        
+        print(self.keys)
+
+
+
+

@@ -1,12 +1,17 @@
+from cmath import log
+from hashlib import sha256
 import sys
 import selectors
 import json
 import io
 import struct
+import time
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto import Random
 from Crypto.PublicKey import RSA
 from Crypto.Util import Padding
+from Crypto.Hash import SHA256
+from Crypto.Protocol.KDF import HKDF
 
 class Message:
     def __init__(self, selector, sock, addr, request):
@@ -18,6 +23,7 @@ class Message:
         self._send_buffer = b""
         self._request_queued = False
 
+        self.client_random = None
         self.key = None
         self._header_len = 16   # header: 16 bytes
         self._authtag_len = 12  # we'd like to use a 12-byte long authentication tag
@@ -26,6 +32,8 @@ class Message:
         self.header = None
         self._type = b''
         self.response = None
+
+        self._login_hash = None
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -74,9 +82,19 @@ class Message:
             msg_length += 256
             _typ = b'\x00\x00'
             self.key = Random.get_random_bytes(32)
+            timestamp = time.time_ns()
+            self.client_random = Random.get_random_bytes(16)
+            payload = str(timestamp) + '\n' + value + '\n' + str(self.client_random.hex())
+            print(payload)
+
+            h = SHA256.new()
+            h.update(bytes(payload, 'utf-8'))
+            self._login_hash = h.hexdigest()
+            print(self._login_hash)
+
 
         # compute payload_length
-        payload_length = len(value)
+        payload_length = len(payload)
 
         # compute message length...
         # header: _header_len
@@ -107,7 +125,7 @@ class Message:
         nonce = sqn + rnd
         AE = AES.new(self.key, AES.MODE_GCM, nonce=nonce, mac_len=self._authtag_len)
         AE.update(header)
-        encrypted_payload, authtag = AE.encrypt_and_digest(bytes(value, 'utf-8'))
+        encrypted_payload, authtag = AE.encrypt_and_digest(bytes(payload, 'utf-8'))
 
         msg = header + encrypted_payload + authtag
 
@@ -138,10 +156,8 @@ class Message:
         self._read()
 
         self.process_response()
-
-        if not self._recv_buffer:
-            # Set selector to listen for read events, we're done writing.
-            self._set_selector_events_mask("w")
+        # Set selector to listen for write events, we're done reading.
+        # self._set_selector_events_mask("w")
 
     def write(self):
         if not self._request_queued:
@@ -153,6 +169,7 @@ class Message:
             if not self._send_buffer:
                 # Set selector to listen for read events, we're done writing.
                 self._set_selector_events_mask("r")
+                self._request_queued = False
 
     def close(self):
         print(f"Closing connection to {self.addr}")
@@ -220,10 +237,21 @@ class Message:
             self.close()
         print("Operation was successful: message is intact, content is decrypted.")
         
-        self._rcvsqn += 1
+        self._rcvsqn = sndsqn
         self._recv_buffer = self._recv_buffer[msg_len:]
        
         # TODO: login protocol
+        self.login_protocol(payload)
+        # print(payload)
 
-        print(payload)
+    def login_protocol(self, payload):
+        request_hash, server_random = payload.decode('utf-8').split("\n")
+
+        if request_hash != self._login_hash:
+            print("Response hash failed!")
+            self.close()
         
+        master_sec = self.client_random + bytes(server_random, 'utf-8')
+        self.key = HKDF(master_sec, 32, salt=request_hash, hashmod=sha256, num_keys=1)
+
+        print(self.key)
