@@ -23,10 +23,10 @@ class Message:
         self.header = None
 
         self.key = None
-
+        self._key = None
         self._header_len = 16   # header: 16 bytes
         self._authtag_len = 12  # we'd like to use a 12-byte long authentication tag
-        self._sqn = 0
+        self._sqn = 1
         self._rcvsqn = 0
         self._type = b''
 
@@ -114,7 +114,7 @@ class Message:
         msg = header + encrypted_payload + authtag
         
         self._sqn += 1
-
+        self.key = self._key
         return msg
 
     def process_events(self, mask):
@@ -267,10 +267,12 @@ class Message:
         self.response = str(self._request_hash) + '\n' + str(server_random.hex())       
 
 
-        master_sec = bytes(client_random, 'utf-8') + server_random
-        self.key = HKDF(master_sec, 32, salt=self._request_hash, hashmod=sha256, num_keys=1)
+        #print(len(bytes.fromhex(client_random)))
+        master_sec = bytes.fromhex(client_random) + server_random
+        #print(len(master_sec))
+        self._key = HKDF(master_sec, key_len=32, salt=bytes.fromhex(self._request_hash), hashmod=SHA256, num_keys=1)
         
-        print(self.keys)
+        print(self._key.hex())
 
 
 

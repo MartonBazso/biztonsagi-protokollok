@@ -85,12 +85,12 @@ class Message:
             timestamp = time.time_ns()
             self.client_random = Random.get_random_bytes(16)
             payload = str(timestamp) + '\n' + value + '\n' + str(self.client_random.hex())
-            print(payload)
+            #print(payload)
 
             h = SHA256.new()
             h.update(bytes(payload, 'utf-8'))
             self._login_hash = h.hexdigest()
-            print(self._login_hash)
+            #print(self._login_hash)
 
 
         # compute payload_length
@@ -240,7 +240,6 @@ class Message:
         self._rcvsqn = sndsqn
         self._recv_buffer = self._recv_buffer[msg_len:]
        
-        # TODO: login protocol
         self.login_protocol(payload)
         # print(payload)
 
@@ -251,7 +250,7 @@ class Message:
             print("Response hash failed!")
             self.close()
         
-        master_sec = self.client_random + bytes(server_random, 'utf-8')
-        self.key = HKDF(master_sec, 32, salt=request_hash, hashmod=sha256, num_keys=1)
+        master_sec = self.client_random + bytes.fromhex(server_random)
+        self.key = HKDF(master_sec, 32, salt=bytes.fromhex(request_hash), hashmod=SHA256, num_keys=1)
 
-        print(self.key)
+        print(self.key.hex())
