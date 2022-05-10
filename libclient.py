@@ -255,7 +255,7 @@ class Message:
         self._recv_buffer = self._recv_buffer[msg_len:]
         if typ == b'\x00\x10':
             self.login_protocol(payload)
-        print(payload)
+        print(payload.decode('utf-8'))
         print('Enter action:')
         command = str(input())
         if command == 'q':

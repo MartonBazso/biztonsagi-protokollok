@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import selectors
 import struct
 import sys
@@ -229,7 +230,7 @@ class Message:
         print("Operation was successful: message is intact, content is decrypted.")
 
         self._rcvsqn = sndsqn
-        print(typ)
+        # print(typ)
         if typ == b'\x00\x00':
             self.login_protocol(payload)
         elif typ == b'\x01\x00':
@@ -294,9 +295,22 @@ class Message:
         h.update(payload)
         self._request_hash = h.hexdigest()
         # print(payload)
-        if payload == 'pwd':
+        parsed_payload = self._parse_payload(payload)
+        if parsed_payload[0] == 'pwd':
             self.response = 'pwd\n' + \
-                str(self._request_hash) + '\n' + 'root_folder'
+                str(self._request_hash) + '\n' + 'fake-path'
         else:
             self.response = 'unknown command\n' + \
-                str(self._request_hash) + '\n' + 'random_param'
+                str(self._request_hash) + '\n' + 'result x'
+
+    def _create_request_from_dict(self, dictionary):
+        request = ''
+        for key, value in dictionary.items():
+            request += value + '\n'
+
+        return request
+
+    def _parse_payload(self, payload):
+        payload_str = payload.decode('utf-8')
+        payload_list = payload_str.split('\n')
+        return payload_list
