@@ -66,6 +66,7 @@ class Message:
                 raise RuntimeError("Peer closed.")
 
     def _write(self):
+        #print('buffer_server', self._send_buffer.hex())
         if self._send_buffer:
             try:
                 # Should be ready to write
@@ -82,15 +83,14 @@ class Message:
     def _create_message(
         self, payload
     ):
+
         if self._type == b'\x00\x00':
-            typ = typ = b'\x00\x10'
-            payload = self.response
+            typ = b'\x00\x10'
         elif self._type == b'\x01\x00':
             typ = b'\x01\x10'
-            payload = self.response
         # compute payload_length and set authtag_length
         payload_length = len(payload)
-
+        print(payload)
         # compute message length...
         # header: 16 bytes
         # payload: payload_length
@@ -163,6 +163,7 @@ class Message:
 
     def process_request(self):
         msg = self._recv_buffer
+        #print('msg_server', msg.hex())
         # parse the message msg
 
         header = msg[0:16]
@@ -242,8 +243,7 @@ class Message:
             self._set_selector_events_mask("w")
 
     def create_response(self):
-        payload = ''
-        message = self._create_message(payload)
+        message = self._create_message(self.response)
         self.response_created = True
         self._send_buffer += message
 
@@ -296,9 +296,31 @@ class Message:
         self._request_hash = h.hexdigest()
         # print(payload)
         parsed_payload = self._parse_payload(payload)
+        # print(parsed_payload)
         if parsed_payload[0] == 'pwd':
             self.response = 'pwd\n' + \
-                str(self._request_hash) + '\n' + 'fake-path'
+                str(self._request_hash) + '\n' + 'root_folder'
+        elif parsed_payload[0] == 'chd':
+            os.chdir(parsed_payload[1])
+            self.response = 'chd\n' + \
+                str(self._request_hash)
+        elif parsed_payload[0] == 'lst':
+            self.response = 'lst\n' + \
+                str(self._request_hash) + '\n' + os.listdir()
+        elif parsed_payload[0] == 'mkd':
+            os.mkdir(parsed_payload[1])
+            self.response = 'mkd\n' + \
+                str(self._request_hash)
+        elif parsed_payload[0] == 'del':
+            os.remove(parsed_payload[1])
+            self.response = 'del\n' + \
+                str(self._request_hash)
+        elif parsed_payload[0] == 'upl':
+            self.response = 'upl\n' + \
+                str(self._request_hash)
+        elif parsed_payload[0] == 'dnl':
+            self.response = 'dnl\n' + \
+                str(self._request_hash)
         else:
             self.response = 'unknown command\n' + \
                 str(self._request_hash) + '\n' + 'result x'
