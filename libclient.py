@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import selectors
@@ -5,7 +6,9 @@ import struct
 import sys
 import time
 from cmath import log
+from distutils.util import split_quoted
 from hashlib import sha256
+from unittest import result
 
 from Crypto import Random
 from Crypto.Cipher import AES, PKCS1_OAEP
@@ -255,7 +258,21 @@ class Message:
         self._recv_buffer = self._recv_buffer[msg_len:]
         if typ == b'\x00\x10':
             self.login_protocol(payload)
-        print(payload.decode('utf-8'))
+        result = payload.decode('utf-8')
+        # decode base64 when command was lst
+        split_result = result.split('\n')
+        if split_result[0] == 'lst':
+            split_result[3] = base64.b64decode(split_result[3]).decode('utf-8')
+        if split_result[0] == 'upl' and split_result[2] == 'accept':
+            pass
+            # TODO Upload protocol trigger
+        if split_result[0] == 'dnl' and split_result[2] == 'accept':
+            pass
+            # TODO Download protocol trigger
+
+        for line in split_result:
+            print(line)
+
         print('Enter action:')
         command = str(input())
         if command == 'q':
@@ -264,8 +281,6 @@ class Message:
         if val is not None:
             value = self._create_request_from_dict(val)
             self.request["content"] = dict(action="command", value=value)
-
-            print("Sending request...")
             self.write()
         else:
             print('Invalid command, closing connection...')

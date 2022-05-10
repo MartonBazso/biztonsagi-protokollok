@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import os
@@ -39,6 +40,9 @@ class Message:
         self.response_created = False
 
         self._request_hash = None
+        self.root_folder_path = os.getcwd()
+        self.starting_directory = os.getcwd() + '\\workdir'
+        self.current_directory = self.starting_directory
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -66,7 +70,7 @@ class Message:
                 raise RuntimeError("Peer closed.")
 
     def _write(self):
-        #print('buffer_server', self._send_buffer.hex())
+        # print('buffer_server', self._send_buffer.hex())
         if self._send_buffer:
             try:
                 # Should be ready to write
@@ -162,8 +166,9 @@ class Message:
             self.sock = None
 
     def process_request(self):
+        os.chdir(self.root_folder_path)
         msg = self._recv_buffer
-        #print('msg_server', msg.hex())
+        # print('msg_server', msg.hex())
         # parse the message msg
 
         header = msg[0:16]
@@ -291,39 +296,111 @@ class Message:
         # print(self._key.hex())
 
     def command_protocol(self, payload):
+        os.chdir(self.current_directory)
+
         h = SHA256.new()
         h.update(payload)
         self._request_hash = h.hexdigest()
-        # print(payload)
         parsed_payload = self._parse_payload(payload)
-        # print(parsed_payload)
+
         if parsed_payload[0] == 'pwd':
-            self.response = 'pwd\n' + \
-                str(self._request_hash) + '\n' + 'root_folder'
+            current_dir = os.getcwd().replace(self.starting_directory, '')
+            if current_dir == '':
+                current_dir = '/'
+            self.response = 'pwd\n' +\
+                str(self._request_hash) + '\nsuccess\n' + \
+                current_dir
         elif parsed_payload[0] == 'chd':
-            os.chdir(parsed_payload[1])
-            self.response = 'chd\n' + \
-                str(self._request_hash)
+            if os.getcwd() == self.starting_directory and parsed_payload[1] == '..':
+                self.response = 'chd\n' + \
+                    str(self._request_hash) + '\nfailure\n' + \
+                    'Not allowed to move out of root directory!'
+                return
+            try:
+                os.chdir(parsed_payload[1])
+                self.current_directory = os.getcwd()
+                self.response = 'chd\n' + \
+                    str(self._request_hash) + '\nsuccess'
+            except NotADirectoryError:
+                self.response = 'chd\n' + \
+                    str(self._request_hash) + '\nfailure\n' + \
+                    'Not a directory!'
+            except FileNotFoundError:
+                self.response = 'chd\n' + \
+                    str(self._request_hash) + '\nfailure\n' + \
+                    'Directory not found!'
+
         elif parsed_payload[0] == 'lst':
+            list_result = os.listdir()
+            print(list_result)
+            list_result_base64_encoded = base64.b64encode(
+                bytes(', '.join(list_result), 'utf-8')).decode('utf-8')
             self.response = 'lst\n' + \
-                str(self._request_hash) + '\n' + os.listdir()
+                str(self._request_hash) + '\nsuccess\n' + \
+                list_result_base64_encoded
         elif parsed_payload[0] == 'mkd':
-            os.mkdir(parsed_payload[1])
-            self.response = 'mkd\n' + \
-                str(self._request_hash)
+            try:
+                os.mkdir(parsed_payload[1])
+            except FileExistsError:
+                self.response = 'mkd\n' + \
+                    str(self._request_hash) + '\nfailure\n' + \
+                    'Directory already exists!'
+            else:
+                self.response = 'mkd\n' + \
+                    str(self._request_hash) + '\nsuccess'
         elif parsed_payload[0] == 'del':
-            os.remove(parsed_payload[1])
-            self.response = 'del\n' + \
-                str(self._request_hash)
+            try:
+                os.rmdir(parsed_payload[1])
+            except FileNotFoundError:
+                self.response = 'del\n' + \
+                    str(self._request_hash) + '\nfailure\n' + \
+                    'File not found!'
+            except OSError:
+                self.response = 'del\n' + \
+                    str(self._request_hash) + '\nfailure\n' + \
+                    'Directory not empty!'
+            else:
+                self.response = 'del\n' +\
+                    str(self._request_hash)
         elif parsed_payload[0] == 'upl':
-            self.response = 'upl\n' + \
-                str(self._request_hash)
+            if os.path.isfile(parsed_payload[1]):
+                self.response = 'upl\n' + \
+                    str(self._request_hash) + '\nreject\n' + \
+                    'File already exists!'
+            else:
+                self.response = 'upl\n' + \
+                    str(self._request_hash) + '\naccept'
+
         elif parsed_payload[0] == 'dnl':
-            self.response = 'dnl\n' + \
-                str(self._request_hash)
+            try:
+                # <result_2> is an unsigned integer converted to a string, the value of which is the size of the file to be downloaded in bytes
+                result_2 = os.path.getsize(parsed_payload[1])
+                # <result_3> is a hexadecimal number converted to a string, the value of which is the SHA-256 hash of the content of the file to be downloaded.
+                h = SHA256.new()
+                h.update(open(parsed_payload[1], 'rb').read())
+                result_3 = h.hexdigest()
+
+                self.response = 'dnl\n' + \
+                    str(self._request_hash) + '\naccept\n' + \
+                    str(result_2) + '\n' + \
+                    str(result_3)
+            except FileNotFoundError:
+                self.response = 'dnl\n' + \
+                    str(self._request_hash) + '\nreject\n' + \
+                    'File not found!'
+            except PermissionError:
+                self.response = 'dnl\n' + \
+                    str(self._request_hash) + '\nreject\n' + \
+                    'Permission denied!'
+            except OSError:
+                self.response = 'dnl\n' + \
+                    str(self._request_hash) + '\nreject\n' + \
+                    'File not found!'
+
         else:
-            self.response = 'unknown command\n' + \
-                str(self._request_hash) + '\n' + 'result x'
+            self.response = parsed_payload[0] + '\n' +\
+                str(self._request_hash) + '\nfailure\n' + \
+                'Unknown command!'
 
     def _create_request_from_dict(self, dictionary):
         request = ''
