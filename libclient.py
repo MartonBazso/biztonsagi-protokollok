@@ -258,6 +258,9 @@ class Message:
         self._recv_buffer = self._recv_buffer[msg_len:]
         if typ == b'\x00\x10':
             self.login_protocol(payload)
+        # TODO if typ == download response call download_protocol function
+        # TODO if typ == upload response call upload_protocol function
+
         result = payload.decode('utf-8')
         # decode base64 when command was lst
         split_result = result.split('\n')

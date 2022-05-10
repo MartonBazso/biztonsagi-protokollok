@@ -43,6 +43,7 @@ class Message:
         self.root_folder_path = os.getcwd()
         self.starting_directory = os.getcwd() + '\\workdir'
         self.current_directory = self.starting_directory
+        self.file_upload_hash = None
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -367,6 +368,7 @@ class Message:
                 self.response = 'upl\n' + \
                     str(self._request_hash) + '\nreject\n' + \
                     'File already exists!'
+                self.file_upload_hash = parsed_payload[3]
             else:
                 self.response = 'upl\n' + \
                     str(self._request_hash) + '\naccept'
