@@ -449,7 +449,7 @@ class Message:
         h.update(self.upl_file)
         upl_file_hash = h.hexdigest()
 
-        with open(self.upl_file_name, "wb") as file:
+        with open(os.path.join(self.current_directory, self.upl_file_name), "wb") as file:
             file.write(self.upl_file)
 
         size = os.path.getsize(self.upl_file_name)

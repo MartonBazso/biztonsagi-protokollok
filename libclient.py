@@ -284,10 +284,11 @@ class Message:
 
         if typ == b'\x01\x10':
             self.command_protocol(payload)
-        
+            if payload.decode('utf-8').split('\n')[0] == "upl":
+                return
+
         if typ == b'\x02\x10':
             self.upload_protocol(payload)
-            return
 
         print('Enter action:')
         command = str(input())
@@ -337,7 +338,7 @@ class Message:
     def upload_protocol(self, payload):
         file_hash, file_size = payload.decode('utf-8').split("\n")
         
-        if self.file_hash != file_hash or file_size != self.file_size:
+        if self.file_hash != file_hash or self.file_size != file_size:
             self.close()
 
         self.upload_filename = ''
@@ -425,5 +426,6 @@ class Message:
         h = SHA256.new()
         h.update(self.uploadfile_content)
         file_hash = h.hexdigest()
-        
+        self.file_size = str(size)
+        self.file_hash = str(file_hash)
         return str(size), file_hash
