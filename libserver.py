@@ -6,8 +6,8 @@ import re
 import selectors
 import struct
 import sys
-import time
 import threading
+import time
 
 import argon2
 from Crypto import Random
@@ -48,6 +48,9 @@ class Message:
         self.upl_file_name = ''
         self.upl_file = b''
 
+        self.dnl_file_name = ''
+        self.dnl_file_content = b''
+        self.dnl_finished = True
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -87,7 +90,8 @@ class Message:
                 self._send_buffer = self._send_buffer[sent:]
                 # Close when the buffer is drained. The response has been sent.
                 if sent and not self._send_buffer:
-                    self._set_selector_events_mask("r")
+                    if self.dnl_finished:
+                        self._set_selector_events_mask("r")
 
     def _create_message(
         self, payload
@@ -99,10 +103,25 @@ class Message:
             typ = b'\x01\x10'
         elif self._type == b'\x02\x01':
             typ = b'\x02\x10'
+        elif self._type == b'\x03\x00':
+            typ = b'\x03\x10'
+
+        print(payload)
+        print(self._type)
+        print(self.dnl_file_content)
+        print('-----------------------------------------------------')
+        if self._type == b'\x03\x10' and not self.dnl_finished:
+            typ = b'\x03\x10'
+            self.download_protocol()
+
+        if self._type == b'\x03\x10' and self.dnl_finished:
+            typ = b'\x03\x11'
         # compute payload_length and set authtag_length
         payload_length = len(payload)
-        
-        print(payload)
+        if self._type == b'\x03\x00' and typ == b'\x03\x10':
+            self._type = b'\x03\x10'
+
+        # print(payload)
         # compute message length...
         # header: 16 bytes
         # payload: payload_length
@@ -129,13 +148,18 @@ class Message:
         AE = AES.new(self.key, AES.MODE_GCM, nonce=nonce,
                      mac_len=self._authtag_len)
         AE.update(header)
+
+        if typ not in [b'\x03\x10', b'\x03\x11']:
+            payload = bytes(payload, 'utf-8')
+
         encrypted_payload, authtag = AE.encrypt_and_digest(
-            bytes(payload, 'utf-8'))
+            payload)
 
         msg = header + encrypted_payload + authtag
 
         self._sqn += 1
         self.key = self._key
+        print(typ)
         return msg
 
     def process_events(self, mask):
@@ -177,7 +201,7 @@ class Message:
 
     def process_request(self):
         os.chdir(self.root_folder_path)
-        
+
         msg = self._recv_buffer
         # print('msg_server', msg.hex())
         # parse the message msg
@@ -192,14 +216,14 @@ class Message:
 
         # check the msg length
         msg_len = len(msg)
-        print(msg_len)
+        # print(msg_len)
         if msg_len != int.from_bytes(_len, byteorder='big'):
             print("Error: Message length value in header is wrong!")
             self.close()
             return
 
         # check the sequence number
-        #print("Expecting sequence number " +
+        # print("Expecting sequence number " +
         #      str(self._rcvsqn + 1) + " or larger...")
         sndsqn = int.from_bytes(sqn, byteorder='big')
         if (sndsqn <= self._rcvsqn):
@@ -209,7 +233,6 @@ class Message:
         #print("Sequence number verification is successful.")
 
         self._type = typ
-
         if typ == b'\x00\x00':
 
             mtp_msg = msg[:-256]
@@ -260,6 +283,8 @@ class Message:
             self.upload_protocol_0(payload)
         elif typ == b'\x02\x01':
             self.upload_protocol(payload)
+        elif typ == b'\x03\x00':
+            self.start_download(payload)
 
         self._recv_buffer = self._recv_buffer[msg_len:]
         # print(len(self._recv_buffer))
@@ -358,7 +383,7 @@ class Message:
 
         elif parsed_payload[0] == 'lst':
             list_result = os.listdir()
-            print(list_result)
+            # print(list_result)
             list_result_base64_encoded = base64.b64encode(
                 bytes(', '.join(list_result), 'utf-8')).decode('utf-8')
             self.response = 'lst\n' + \
@@ -404,8 +429,11 @@ class Message:
                 # <result_2> is an unsigned integer converted to a string, the value of which is the size of the file to be downloaded in bytes
                 result_2 = os.path.getsize(parsed_payload[1])
                 # <result_3> is a hexadecimal number converted to a string, the value of which is the SHA-256 hash of the content of the file to be downloaded.
+                self.dnl_file_name = parsed_payload[1]
+                with open(self.dnl_file_name, 'rb') as file:
+                    self.dnl_file_content = file.read()
                 h = SHA256.new()
-                h.update(open(parsed_payload[1], 'rb').read())
+                h.update(self.dnl_file_content)
                 result_3 = h.hexdigest()
 
                 self.response = 'dnl\n' + \
@@ -454,9 +482,30 @@ class Message:
 
         size = os.path.getsize(self.upl_file_name)
         self.upl_file = b''
-        self.upl_file_name= ''
+        self.upl_file_name = ''
 
         self.response = upl_file_hash + '\n' + str(size)
 
     def upload_protocol_0(self, payload):
         self.upl_file += payload
+
+    def download_protocol(self):
+        if len(self.dnl_file_content) > 1024:
+            self.dnl_file_content = self.dnl_file_content[:1024]
+            self.response = self.dnl_file_content[1024:]
+        else:
+            self.response = self.dnl_file_content
+            self.dnl_file_content = b''
+            self.dnl_file_name = ''
+            self.dnl_finished = True
+
+    def start_download(self, payload):
+        if payload == b'Ready':
+            self.dnl_finished = False
+            print('Download started!')
+            self.download_protocol()
+            self.write()
+        else:
+            self.dnl_file_name = ''
+            self.dnl_file_content = b''
+            self.dnl_finished = True
