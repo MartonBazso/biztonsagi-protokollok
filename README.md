@@ -1,5 +1,7 @@
 # Simple File Transfer v1.0
 
+git repo link:
+https://github.com/MartonBazso/biztonsagi-protokollok
 Fentős Bence
 Bazsó Márton
 
