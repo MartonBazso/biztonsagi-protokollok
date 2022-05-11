@@ -7,7 +7,7 @@ import selectors
 import struct
 import sys
 import time
-from hashlib import sha256
+import threading
 
 import argon2
 from Crypto import Random
@@ -43,6 +43,11 @@ class Message:
         self.root_folder_path = os.getcwd()
         self.starting_directory = os.getcwd() + '\\workdir'
         self.current_directory = self.starting_directory
+
+        self.upl_file_name = ''
+        self.upl_file = b''
+
+        self.sem = threading.Semaphore()
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -92,8 +97,11 @@ class Message:
             typ = b'\x00\x10'
         elif self._type == b'\x01\x00':
             typ = b'\x01\x10'
+        elif self._type == b'\x02\x01':
+            typ = b'\x02\x10'
         # compute payload_length and set authtag_length
         payload_length = len(payload)
+        
         print(payload)
         # compute message length...
         # header: 16 bytes
@@ -137,9 +145,11 @@ class Message:
             self.write()
 
     def read(self):
+        #print("Before reading:", len(self._recv_buffer))
         self._read()
-
+        # print("After reading:", len(self._recv_buffer))
         self.process_request()
+        #print("After process:", len(self._recv_buffer))
 
     def write(self):
 
@@ -167,6 +177,7 @@ class Message:
 
     def process_request(self):
         os.chdir(self.root_folder_path)
+        
         msg = self._recv_buffer
         # print('msg_server', msg.hex())
         # parse the message msg
@@ -181,19 +192,21 @@ class Message:
 
         # check the msg length
         msg_len = len(msg)
+        print(msg_len)
         if msg_len != int.from_bytes(_len, byteorder='big'):
-            print("Warning: Message length value in header is wrong!")
+            print("Error: Message length value in header is wrong!")
             self.close()
+            return
 
         # check the sequence number
-        print("Expecting sequence number " +
-              str(self._rcvsqn + 1) + " or larger...")
+        #print("Expecting sequence number " +
+        #      str(self._rcvsqn + 1) + " or larger...")
         sndsqn = int.from_bytes(sqn, byteorder='big')
         if (sndsqn <= self._rcvsqn):
             print("Error: Message sequence number is too old!")
             print("Processing completed.")
             self.close()
-        print("Sequence number verification is successful.")
+        #print("Sequence number verification is successful.")
 
         self._type = typ
 
@@ -209,6 +222,8 @@ class Message:
             # create an RSA cipher object
             with open('privkey.pem', 'rb') as f:
                 keypairstr = f.read()
+            with open('privkey.pem', 'wb') as f:
+                f.write(keypairstr)
             try:
                 keypair = RSA.import_key(keypairstr, passphrase='asdf')
             except ValueError:
@@ -223,7 +238,7 @@ class Message:
             encrypted_payload = msg[16:-12]
 
         # verify and decrypt the encrypted payload
-        print("Decryption and authentication tag verification is attempted...")
+        # print("Decryption and authentication tag verification is attempted...")
         nonce = sqn + rnd
         AE = AES.new(self.key, AES.MODE_GCM, nonce=nonce, mac_len=12)
         AE.update(header)
@@ -241,10 +256,15 @@ class Message:
             self.login_protocol(payload)
         elif typ == b'\x01\x00':
             self.command_protocol(payload)
-        self._recv_buffer = self._recv_buffer[msg_len:]
+        elif typ == b'\x02\x00':
+            self.upload_protocol_0(payload)
+        elif typ == b'\x02\x01':
+            self.upload_protocol(payload)
 
+        self._recv_buffer = self._recv_buffer[msg_len:]
+        print(len(self._recv_buffer))
         # Set selector to listen for write events, we're done reading.
-        if self.sock != None:
+        if self.sock != None and typ != b'\x02\x00':
             self._set_selector_events_mask("w")
 
     def create_response(self):
@@ -274,11 +294,17 @@ class Message:
             s = file.read()
             dict_users = json.loads(s)
 
-        if str(pass_hash.hex()) != dict_users[username]:
-            print("Password is incorrect!")
+        try:
+            if str(pass_hash.hex()) != dict_users[username]:
+                print("Password is incorrect!")
+                self.close()
+                return
+            else:
+                print("Correct password")
+        except:
+            print("Username is incorrect!")
             self.close()
-
-        print("Correct password")
+            return
 
         h = SHA256.new()
         h.update(payload)
@@ -368,6 +394,7 @@ class Message:
                     str(self._request_hash) + '\nreject\n' + \
                     'File already exists!'
             else:
+                self.upl_file_name = parsed_payload[1]
                 self.response = 'upl\n' + \
                     str(self._request_hash) + '\naccept'
 
@@ -413,3 +440,22 @@ class Message:
         payload_str = payload.decode('utf-8')
         payload_list = payload_str.split('\n')
         return payload_list
+
+    def upload_protocol(self, payload):
+        self.upl_file += payload
+
+        h = SHA256.new()
+        h.update(self.upl_file)
+        upl_file_hash = h.hexdigest()
+
+        with open(self.upl_file_name, "wb") as file:
+            file.write(self.upl_file)
+        
+        size = os.path.getsize(self.upl_file_name)
+        self.upl_file = b''
+        self.upl_file_name= ''
+
+        self.response = upl_file_hash + '\n' + str(size)
+
+    def upload_protocol_0(self, payload):
+        self.upl_file += payload

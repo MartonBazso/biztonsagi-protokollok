@@ -5,6 +5,7 @@ import selectors
 import struct
 import sys
 import time
+import os
 from cmath import log
 from distutils.util import split_quoted
 from hashlib import sha256
@@ -38,7 +39,14 @@ class Message:
         self._type = b''
         self.response = None
 
+        self.upload_filename = ''
+        self.uploadfile_content = b''
+        self.upload_finished = True
+        self.file_hash = b''
+        self.file_size = 0
+
         self._login_hash = None
+
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -82,7 +90,7 @@ class Message:
     ):
         msg_length = 0
         _typ = b''
-        payload = value
+        
 
         if action == "login":
             # add the encrypted temp key length
@@ -93,14 +101,26 @@ class Message:
             self.client_random = Random.get_random_bytes(16)
             payload = str(timestamp) + '\n' + value + '\n' + \
                 str(self.client_random.hex())
-            # print(payload)
-
+            
             h = SHA256.new()
             h.update(bytes(payload, 'utf-8'))
             self._login_hash = h.hexdigest()
-            # print(self._login_hash)
+
         if action == "command":
             _typ = b'\x01\x00'
+            payload = value
+        
+
+        if action == "upload":
+            if len(value) > 1024:
+                _typ = b'\x02\x00'
+                payload = value[:1024]
+                self.request["content"] = dict(action="upload", value=value[1024:])
+                self.upload_finished = False
+            else:
+                _typ = b'\x02\x01'
+                payload = value
+                self.upload_finished = True
 
         # compute payload_length
         payload_length = len(payload)
@@ -110,7 +130,7 @@ class Message:
         # payload: payload_length
         # authtag: _authtag_len
         msg_length += self._header_len + payload_length + self._authtag_len
-
+        print(msg_length)
         # header: 16 bytes
         #    version: 2 bytes
         #    type:    2 btye
@@ -118,16 +138,11 @@ class Message:
         #    sqn:     2 bytes
         #    rnd:     6 bytes
         #    rsv:     2 bytes
-
-        # create header
         ver = b'\x01\x00'                                     # protocol version 1.0
-        typ = _typ                                   # message type 0
-        # message length (encoded on 2 bytes)
-        _len = msg_length.to_bytes(2, byteorder='big')
-        # next message sequence number (encoded on 2 bytes)
-        sqn = (self._sqn + 1).to_bytes(2, byteorder='big')
-        # 6-byte long random value
-        rnd = Random.get_random_bytes(6)
+        typ = _typ                                            # message type 0
+        _len = msg_length.to_bytes(2, byteorder='big')        # message length (encoded on 2 bytes)
+        sqn = (self._sqn + 1).to_bytes(2, byteorder='big')    # next message sequence number (encoded on 2 bytes)
+        rnd = Random.get_random_bytes(6)                      # 6-byte long random value
         rsv = b'\x00\x00'                                     # reserved bytes
 
         header = ver + typ + _len + sqn + rnd + rsv
@@ -138,8 +153,12 @@ class Message:
         AE = AES.new(self.key, AES.MODE_GCM, nonce=nonce,
                      mac_len=self._authtag_len)
         AE.update(header)
+
+        if action == "login" or action == "command":
+            payload = bytes(payload, 'utf-8')
+
         encrypted_payload, authtag = AE.encrypt_and_digest(
-            bytes(payload, 'utf-8'))
+            payload)
 
         msg = header + encrypted_payload + authtag
 
@@ -174,16 +193,19 @@ class Message:
         # self._set_selector_events_mask("w")
 
     def write(self):
+
         if not self._request_queued:
             self.queue_request()
 
         self._write()
-
+        
         if self._request_queued:
             if not self._send_buffer:
-                # Set selector to listen for read events, we're done writing.
-                self._set_selector_events_mask("r")
                 self._request_queued = False
+                if self.upload_finished:
+                    # Set selector to listen for read events, we're done writing.
+                    self._set_selector_events_mask("r")
+                
 
     def close(self):
         print(f"Closing connection to {self.addr}")
@@ -258,20 +280,12 @@ class Message:
         self._recv_buffer = self._recv_buffer[msg_len:]
         if typ == b'\x00\x10':
             self.login_protocol(payload)
-        result = payload.decode('utf-8')
-        # decode base64 when command was lst
-        split_result = result.split('\n')
-        if split_result[0] == 'lst':
-            split_result[3] = base64.b64decode(split_result[3]).decode('utf-8')
-        if split_result[0] == 'upl' and split_result[2] == 'accept':
-            pass
-            # TODO Upload protocol trigger
-        if split_result[0] == 'dnl' and split_result[2] == 'accept':
-            pass
-            # TODO Download protocol trigger
 
-        for line in split_result:
-            print(line)
+        if typ == b'\x01\x10':
+            self.command_protocol(payload)
+        
+        if typ == b'\x02\x10':
+            self.upload_protocol(payload)
 
         print('Enter action:')
         command = str(input())
@@ -298,6 +312,46 @@ class Message:
             request_hash), hashmod=SHA256, num_keys=1)
 
         # print(self.key.hex())
+
+    def command_protocol(self, payload):
+        result = payload.decode('utf-8')
+        # decode base64 when command was lst
+        split_result = result.split('\n')
+
+        for line in split_result:
+            print(line)
+
+        if split_result[0] == 'lst':
+            split_result[3] = base64.b64decode(split_result[3]).decode('utf-8')
+        if split_result[0] == 'upl' and split_result[2] == 'accept':
+            print("Uploading...")
+            self.upload_request()
+        if split_result[0] == 'dnl' and split_result[2] == 'accept':
+            pass
+            # TODO Download protocol trigger
+
+        
+
+
+    def upload_protocol(self, payload):
+        file_hash, file_size = payload.decode('utf-8').split("\n")
+        
+        if self.file_hash != file_hash or file_size != self.file_size:
+            self.close()
+
+        self.upload_filename = ''
+        self.uploadfile_content = b''
+        self.upload_finished = True
+        self.file_hash = b''
+        self.file_size = 0
+
+
+    def upload_request(self):
+        self.request["content"] = dict(action="upload", value=self.uploadfile_content)
+        self.write()
+        while not self.upload_finished:
+            self.write()
+
 
     def _create_request_from_dict(self, dictionary):
         request = ''
@@ -343,6 +397,8 @@ class Message:
             print('Please enter the file name:')
             file_name = str(input())
 
+            param2, param3 = self._upl_file_meta(file_name)
+            self.upload_filename = file_name
             dictionary = {
                 'command': 'upl',
                 'param1': file_name,
@@ -357,3 +413,16 @@ class Message:
                 'param1': file_name
             }
         return dictionary
+
+    def _upl_file_meta(self, filename):
+        size = os.path.getsize(filename)
+        print(size)
+
+        with open(filename,'rb') as file:
+            self.uploadfile_content = file.read()
+        
+        h = SHA256.new()
+        h.update(self.uploadfile_content)
+        file_hash = h.hexdigest()
+        
+        return str(size), file_hash
