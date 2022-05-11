@@ -303,7 +303,6 @@ class Message:
             return
         if typ == b'\x03\x11':
             self.finish_download(payload)
-            return
 
         print('Enter action:')
         command = str(input())
