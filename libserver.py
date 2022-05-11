@@ -43,6 +43,7 @@ class Message:
         self.root_folder_path = os.getcwd()
         self.starting_directory = os.getcwd() + '\\workdir'
         self.current_directory = self.starting_directory
+        self.file_upload_hash = None
 
         self.upl_file_name = ''
         self.upl_file = b''
@@ -393,6 +394,7 @@ class Message:
                 self.response = 'upl\n' + \
                     str(self._request_hash) + '\nreject\n' + \
                     'File already exists!'
+                self.file_upload_hash = parsed_payload[3]
             else:
                 self.upl_file_name = parsed_payload[1]
                 self.response = 'upl\n' + \
