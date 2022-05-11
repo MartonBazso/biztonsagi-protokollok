@@ -48,7 +48,6 @@ class Message:
         self.upl_file_name = ''
         self.upl_file = b''
 
-        self.sem = threading.Semaphore()
 
     def _set_selector_events_mask(self, mode):
         """Set selector to listen for events: mode is 'r', 'w', or 'rw'."""
@@ -263,7 +262,7 @@ class Message:
             self.upload_protocol(payload)
 
         self._recv_buffer = self._recv_buffer[msg_len:]
-        print(len(self._recv_buffer))
+        # print(len(self._recv_buffer))
         # Set selector to listen for write events, we're done reading.
         if self.sock != None and typ != b'\x02\x00':
             self._set_selector_events_mask("w")
@@ -452,7 +451,7 @@ class Message:
 
         with open(self.upl_file_name, "wb") as file:
             file.write(self.upl_file)
-        
+
         size = os.path.getsize(self.upl_file_name)
         self.upl_file = b''
         self.upl_file_name= ''

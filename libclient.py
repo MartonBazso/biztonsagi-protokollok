@@ -278,6 +278,7 @@ class Message:
 
         self._rcvsqn = sndsqn
         self._recv_buffer = self._recv_buffer[msg_len:]
+        
         if typ == b'\x00\x10':
             self.login_protocol(payload)
 
@@ -286,6 +287,7 @@ class Message:
         
         if typ == b'\x02\x10':
             self.upload_protocol(payload)
+            return
 
         print('Enter action:')
         command = str(input())
@@ -318,11 +320,9 @@ class Message:
         # decode base64 when command was lst
         split_result = result.split('\n')
 
-        for line in split_result:
-            print(line)
-
         if split_result[0] == 'lst':
             split_result[3] = base64.b64decode(split_result[3]).decode('utf-8')
+
         if split_result[0] == 'upl' and split_result[2] == 'accept':
             print("Uploading...")
             self.upload_request()
@@ -330,7 +330,8 @@ class Message:
             pass
             # TODO Download protocol trigger
 
-        
+        for line in split_result:
+            print(line)
 
 
     def upload_protocol(self, payload):
